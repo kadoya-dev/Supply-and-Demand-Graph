@@ -86,15 +86,13 @@ function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
 const price = [];
 for(let i=0;i<N;i++){
   let v;
-  if(i < 15)       v = 12 - (i/15)*1.8;                     // 12→10.2
-  else if(i < 60)  v = 10.2 - ((i-15)/45)*0.8;              // 10.2→9.4
-  else if(i < 110) v = 9.4 - ((i-60)/50)*0.4;               // 9.4→9.0
-  else if(i < 140) v = 9.0 + ((i-110)/30)*0.4;              // 9.0→9.4
-  else if(i < 155) v = 9.4 - ((i-140)/15)*0.7;              // 9.4→8.7
-  else if(i < 165) v = 8.7 - ((i-155)/10)*2.5;              // 8.7→6.2
-  else             v = 6.2 + ((i-165)/15)*0.4;              // 6.2→6.6
-
-  v = clamp(v + noise(0.14), 5.6, 12.2);
+  if(i < 45)       v = 350 - (i/45)*4;
+  else if(i < 90)  v = 346 - ((i-45)/45)*11;
+  else if(i < 120) v = 335 - ((i-90)/30)*15;
+  else if(i < 150) v = 320 - ((i-120)/30)*15;
+  else             v = 305 - ((i-150)/30)*5;
+  if(i === 55 || i === 105) v += 18;
+  v = clamp(v + noise(4.2), 290, 365);
   v = Math.round(v * 10) / 10;
   price.push(v);
 }
@@ -102,14 +100,15 @@ for(let i=0;i<N;i++){
 // セラー数（ステップ）
 const sellers = [];
 for(let i=0;i<N;i++){
-  let v = 7;
-  if(i < 70) v = 7;
-  else if(i < 95) v = 6;
-  else if(i < 120) v = 8;
-  else if(i < 150) v = 7;
-  else if(i < 160) v = 8;
-  else if(i < 172) v = 12;
-  else v = 11;
+  let v = 12;
+  if(i < 20) v = 12 + Math.round(i/4);
+  else if(i < 45) v = 18 + Math.round(noise(2));
+  else if(i < 75) v = 20 + Math.round(noise(3));
+  else if(i < 105) v = 24 + Math.round(noise(3));
+  else if(i < 130) v = 22 + Math.round(noise(2));
+  else if(i < 150) v = 20 + Math.round(noise(2));
+  else v = 21 + Math.round(noise(2));
+  v = clamp(v, 10, 28);
   sellers.push(v);
 }
 
@@ -131,27 +130,23 @@ for(let i=0;i<N;i++){
 
 // ランキング（スパイクあり）
 const rank = [];
-let r = 55500;
+let r = 120000;
 for(let i=0;i<N;i++){
-  r += noise(700);
-  if(i >= 30 && i < 45) r += 250;
-  if(i >= 45 && i < 55) r -= 350;
-  if(i >= 60 && i < 75) r += 300;
-  if(i >= 75 && i < 85) r -= 280;
-
-  if(i === 92 || i === 118) r += 6500;
-  if(i === 100) r -= 4500;
-  if(i > 140) r += 120;
-
-  r = clamp(r, 49000, 67000);
+  r += noise(3500);
+  if(i >= 25 && i < 60) r += 800;
+  if(i >= 60 && i < 90) r -= 1200;
+  if(i >= 90 && i < 120) r += 1000;
+  if(i === 110 || i === 148) r += 18000;
+  if(i === 135) r -= 15000;
+  r = clamp(r, 90000, 165000);
   rank.push(Math.round(r));
 }
 
 // ===== 120日付近を強調（縦帯） =====
-const forcedMinIndex = 60; // 180日開始 => 120日 = 180-120 = 60
+const forcedMinIndex = 122; // 58日目付近を最安値帯に寄せる
 
 // ===== 赤字ライン（入力で変更） =====
-let LOSS_LINE = 5.7;
+let LOSS_LINE = 300;
 
 // ===== オレンジ系 =====
 const ORANGE = '#f59e0b';
@@ -268,9 +263,9 @@ const chart = new Chart(document.getElementById('chart'),{
     },
     scales:{
       x:{ticks:{maxTicksLimit:12}},
-      yRank:{ position:'left', title:{display:true,text:'ランキング'}, suggestedMin:48000, suggestedMax:68000 },
-      ySeller:{ position:'right', title:{display:true,text:'セラー数'}, grid:{drawOnChartArea:false}, suggestedMin:5, suggestedMax:12 },
-      yPrice:{ position:'right', offset:true, title:{display:true,text:'価格(USD)'}, grid:{drawOnChartArea:false}, suggestedMin:4.8, suggestedMax:12.5 }
+      yRank:{ position:'left', title:{display:true,text:'ランキング'}, suggestedMin:90000, suggestedMax:170000 },
+      ySeller:{ position:'right', title:{display:true,text:'セラー数'}, grid:{drawOnChartArea:false}, suggestedMin:10, suggestedMax:30 },
+      yPrice:{ position:'right', offset:true, title:{display:true,text:'価格(USD)'}, grid:{drawOnChartArea:false}, suggestedMin:290, suggestedMax:370 }
     }
   }
 });
