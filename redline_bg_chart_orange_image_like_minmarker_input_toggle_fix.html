@@ -81,7 +81,7 @@
     添付画像の傾向を参考に、(1)ランキングは90k〜165k帯で上下＋スパイク、(2)セラー数は12〜28の段階推移、(3)価格は350付近から300付近へ段階的に下落する波形で再現しています。
   </div>
 </div>
-<div class="version">Version: 2025.03.08-02</div>
+<div class="version">Version: 2025.03.08-03</div>
 
 <script>
 Chart.register(window['chartjs-plugin-annotation']);
@@ -116,20 +116,19 @@ for(let i=0;i<N;i++){
   }
   if(i === 62 || i === 108) v += 16;
   if(i === 142) v -= 12;
-  v = clamp(v + noise(4.8), 295, 368);
+  v = clamp(v + noise(4.8), 300.3, 368);
   v = Math.round(v * 10) / 10;
   price.push(v);
 }
 
-// --- 120日あたり（ラベル"120日"付近）に「過去最安値」を無理やり作る ---
-const forcedMinIndex = 122; // 180日開始のため 58日目付近に最安値寄せ
-if (forcedMinIndex >= 0 && forcedMinIndex < price.length){
-  // 現在の最小より少し下にして「必ず」最安値にする（下限は5.6）
-  let currentMin = Infinity;
-  for (let i=0; i<price.length; i++){ if (price[i] < currentMin) currentMin = price[i]; }
-  const forced = Math.max(290, Math.round((currentMin - 6) * 10) / 10);
-  price[forcedMinIndex] = forced;
-}
+// --- 過去最安値（300.3）を複数回登場させる ---
+const forcedMinValue = 300.3;
+const forcedMinIndices = [38, 122, 158];
+forcedMinIndices.forEach((idx) => {
+  if (idx >= 0 && idx < price.length){
+    price[idx] = forcedMinValue;
+  }
+});
 
 // --- 過去最安値（価格の最小値）を抽出してマーカー表示用データを作る ---
 let minPrice = Infinity;
