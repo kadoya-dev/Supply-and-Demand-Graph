@@ -1,0 +1,283 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>画像寄せ + 赤字ライン + 過去最安値(縦帯)（オレンジ系）</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+
+<style>
+  body{
+    margin:0;
+    background:#f3f4f6;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+    color:#111827;
+  }
+  .wrapper{
+    max-width:1100px;
+    margin:24px auto;
+    background:#fff;
+    border-radius:14px;
+    box-shadow:0 10px 28px rgba(0,0,0,.08);
+    padding:16px 18px 18px;
+  }
+  h1{ font-size:15px; margin:0 0 8px; font-weight:700; }
+  .controls{
+    display:flex; flex-wrap:wrap; align-items:center; gap:10px;
+    margin: 8px 0 8px;
+  }
+  .controls label{ font-size:12px; color:#374151; }
+  .controls input[type="number"]{
+    width:80px; padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; font-size:12px;
+  }
+  .hint{ font-size:12px; color:#6b7280; }
+  .chartBox{ height:320px; position:relative; }
+  canvas{ width:100% !important; height:100% !important; display:block; }
+  .note{ font-size:12px; color:#6b7280; margin-top:10px; line-height:1.45; }
+  @media (max-width:720px){
+    .wrapper{ margin:12px; }
+    .chartBox{ height:260px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <h1>ランキング / セラー数 / 価格 + 赤字ライン（画像寄せ・オレンジ系）</h1>
+
+  <div class="controls">
+    <label>赤字ライン（USD）</label>
+    <input id="lossInput" type="number" step="0.1" value="5.7">
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input id="lossToggle" type="checkbox" checked>
+      赤字ラインを表示
+    </label>
+    <span class="hint">※OFFで「点線＋背景」をまとめて非表示</span>
+  </div>
+
+  <div class="chartBox"><canvas id="chart"></canvas></div>
+
+  <div class="note">
+    過去最安値は「点」ではなく、120日付近を<strong>縦帯の背景</strong>で強調しています（横線なし）。
+  </div>
+</div>
+
+<script>
+Chart.register(window['chartjs-plugin-annotation']);
+
+/** 画像寄せの疑似データ（決め打ち + 微小ノイズ） */
+const N = 180;
+const labels = Array.from({length:N}, (_,i)=> `${N-i}日`);
+
+// 乱数（再現性）
+let seed = 42;
+function rand(){
+  seed = (seed * 1664525 + 1013904223) % 4294967296;
+  return seed / 4294967296;
+}
+function noise(scale){ return (rand()-0.5) * scale; }
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+
+// 価格（USD）
+const price = [];
+for(let i=0;i<N;i++){
+  let v;
+  if(i < 15)       v = 12 - (i/15)*1.8;                     // 12→10.2
+  else if(i < 60)  v = 10.2 - ((i-15)/45)*0.8;              // 10.2→9.4
+  else if(i < 110) v = 9.4 - ((i-60)/50)*0.4;               // 9.4→9.0
+  else if(i < 140) v = 9.0 + ((i-110)/30)*0.4;              // 9.0→9.4
+  else if(i < 155) v = 9.4 - ((i-140)/15)*0.7;              // 9.4→8.7
+  else if(i < 165) v = 8.7 - ((i-155)/10)*2.5;              // 8.7→6.2
+  else             v = 6.2 + ((i-165)/15)*0.4;              // 6.2→6.6
+
+  v = clamp(v + noise(0.14), 5.6, 12.2);
+  v = Math.round(v * 10) / 10;
+  price.push(v);
+}
+
+// セラー数（ステップ）
+const sellers = [];
+for(let i=0;i<N;i++){
+  let v = 7;
+  if(i < 70) v = 7;
+  else if(i < 95) v = 6;
+  else if(i < 120) v = 8;
+  else if(i < 150) v = 7;
+  else if(i < 160) v = 8;
+  else if(i < 172) v = 12;
+  else v = 11;
+  sellers.push(v);
+}
+
+// ランキング（スパイクあり）
+const rank = [];
+let r = 55500;
+for(let i=0;i<N;i++){
+  r += noise(700);
+  if(i >= 30 && i < 45) r += 250;
+  if(i >= 45 && i < 55) r -= 350;
+  if(i >= 60 && i < 75) r += 300;
+  if(i >= 75 && i < 85) r -= 280;
+
+  if(i === 92 || i === 118) r += 6500;
+  if(i === 100) r -= 4500;
+  if(i > 140) r += 120;
+
+  r = clamp(r, 49000, 67000);
+  rank.push(Math.round(r));
+}
+
+// ===== 120日付近を強調（縦帯） =====
+const forcedMinIndex = 60; // 180日開始 => 120日 = 180-120 = 60
+
+// ===== 赤字ライン（入力で変更） =====
+let LOSS_LINE = 5.7;
+
+// ===== オレンジ系 =====
+const ORANGE = '#f59e0b';
+const ORANGE_LINE = 'rgba(245,158,11,.85)';
+const ORANGE_FILL = 'rgba(245,158,11,.12)';
+
+// ===== 過去最安値（120日付近）を「縦帯の背景」で強調（横線なし） =====
+const minBandPlugin = {
+  id: 'minBand',
+  beforeDatasetsDraw(chart, args, opts){
+    if(!opts || opts.enabled === false) return;
+    const {ctx, chartArea, scales} = chart;
+    if(!chartArea) return;
+
+    const xScale = scales.x;
+    const idx = opts.index;
+
+    const x = xScale.getPixelForValue(idx);
+    const xPrev = xScale.getPixelForValue(Math.max(0, idx-1));
+    const xNext = xScale.getPixelForValue(Math.min(chart.data.labels.length-1, idx+1));
+    const step = Math.max(4, Math.min(60, (Math.abs(x - xPrev) + Math.abs(xNext - x)) / 2));
+    const half = step * 0.55;
+
+    ctx.save();
+    ctx.fillStyle = opts.fill || ORANGE_FILL;
+    ctx.fillRect(x - half, chartArea.top, half*2, chartArea.bottom - chartArea.top);
+
+    // ラベル（不要なら label:null に）
+    if(opts.label){
+      ctx.font = '12px -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif';
+      const text = opts.label;
+      const pad = 6;
+      const w = ctx.measureText(text).width;
+      const bx = Math.min(chartArea.right - (w + pad*2), Math.max(chartArea.left, x - w/2 - pad));
+      const by = chartArea.top + 8;
+
+      ctx.fillStyle = 'rgba(255,255,255,.92)';
+      const bh = 22, bw = w + pad*2, rr = 8;
+      ctx.beginPath();
+      ctx.moveTo(bx+rr, by);
+      ctx.arcTo(bx+bw, by, bx+bw, by+bh, rr);
+      ctx.arcTo(bx+bw, by+bh, bx, by+bh, rr);
+      ctx.arcTo(bx, by+bh, bx, by, rr);
+      ctx.arcTo(bx, by, bx+bw, by, rr);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = opts.labelColor || ORANGE;
+      ctx.fillText(text, bx + pad, by + 15);
+    }
+    ctx.restore();
+  }
+};
+Chart.register(minBandPlugin);
+
+// ===== 赤字ラインの背景（ラインより下を全面塗り） =====
+const lossBgPlugin = {
+  id:'lossBg',
+  beforeDatasetsDraw(chart,args,opts){
+    if(opts && opts.enabled === false) return; // OFF時は描画しない
+    const {ctx,chartArea,scales}=chart;
+    if(!chartArea) return;
+    const y = scales.yPrice.getPixelForValue(opts.loss);
+    ctx.save();
+    ctx.fillStyle = ORANGE_FILL;
+    ctx.fillRect(chartArea.left, y, chartArea.right-chartArea.left, chartArea.bottom-y);
+    ctx.restore();
+  }
+};
+Chart.register(lossBgPlugin);
+
+// ===== チャート =====
+const chart = new Chart(document.getElementById('chart'),{
+  type:'line',
+  data:{
+    labels,
+    datasets:[
+      { label:'ランキング', data:rank, yAxisID:'yRank', borderColor:'#3b82f6', borderWidth:2, pointRadius:0, tension:.25 },
+      { label:'セラー数', data:sellers, yAxisID:'ySeller', borderColor:'#fb7185', borderWidth:2, pointRadius:0, tension:0 },
+      { label:'価格(USD)', data:price, yAxisID:'yPrice', borderColor:ORANGE, borderWidth:2, pointRadius:0, tension:0 }
+    ]
+  },
+  options:{
+    responsive:true,
+    maintainAspectRatio:false,
+    interaction:{mode:'index',intersect:false},
+    plugins:{
+      legend:{display:true},
+      minBand:{ enabled:true, index: forcedMinIndex, fill: ORANGE_FILL, label:'過去最安値', labelColor: ORANGE },
+      lossBg:{ enabled:true, loss:LOSS_LINE },
+      annotation:{
+        annotations:{
+          loss:{
+            type:'line',
+            display:true,
+            yMin:LOSS_LINE,
+            yMax:LOSS_LINE,
+            yScaleID:'yPrice',
+            borderColor: ORANGE_LINE,
+            borderDash:[6,6],
+            borderWidth:1.5,
+            label:{
+              display:true,
+              content:'赤字ライン',
+              position:'end',
+              backgroundColor:'rgba(255,255,255,.92)',
+              color: ORANGE,
+              padding:6,
+              borderRadius:8
+            }
+          }
+        }
+      }
+    },
+    scales:{
+      x:{ticks:{maxTicksLimit:12}},
+      yRank:{ position:'left', title:{display:true,text:'ランキング'}, suggestedMin:48000, suggestedMax:68000 },
+      ySeller:{ position:'right', title:{display:true,text:'セラー数'}, grid:{drawOnChartArea:false}, suggestedMin:5, suggestedMax:12 },
+      yPrice:{ position:'right', offset:true, title:{display:true,text:'価格(USD)'}, grid:{drawOnChartArea:false}, suggestedMin:4.8, suggestedMax:12.5 }
+    }
+  }
+});
+
+// ===== UI: 入力で赤字ライン更新 =====
+const lossInput = document.getElementById('lossInput');
+lossInput.addEventListener('input', () => {
+  const v = parseFloat(lossInput.value);
+  if (isNaN(v)) return;
+  LOSS_LINE = v;
+
+  chart.options.plugins.annotation.annotations.loss.yMin = v;
+  chart.options.plugins.annotation.annotations.loss.yMax = v;
+  chart.options.plugins.lossBg.loss = v;
+
+  chart.update();
+});
+
+// ===== UI: 赤字ライン ON/OFF（点線＋背景） =====
+const lossToggle = document.getElementById('lossToggle');
+lossToggle.addEventListener('change', () => {
+  const show = lossToggle.checked;
+  chart.options.plugins.annotation.annotations.loss.display = show;
+  chart.options.plugins.lossBg.enabled = show;
+  chart.update();
+});
+</script>
+</body>
+</html>
