@@ -32,6 +32,10 @@
     height:320px;
     position:relative;
   }
+  .chartBox--secondary{
+    height:220px;
+    margin-top:14px;
+  }
   canvas{
     width:100% !important;
     height:100% !important;
@@ -46,6 +50,7 @@
   @media (max-width: 720px){
     .wrapper{ margin:12px; }
     .chartBox{ height:260px; }
+    .chartBox--secondary{ height:200px; }
   }
 </style>
 </head>
@@ -65,6 +70,7 @@
   </div>
 
   <div class="chartBox"><canvas id="chart"></canvas></div>
+  <div class="chartBox chartBox--secondary"><canvas id="subChart"></canvas></div>
   <div class="note">
     画像の傾向に寄せて、(1)ランキングは90k〜165k帯で上下＋スパイク、(2)セラー数は10〜28の段階推移、(3)価格は350付近から300付近へ段階的に下落、を再現しています。
   </div>
@@ -281,6 +287,40 @@ const chart = new Chart(document.getElementById('chart'),{
         grid:{drawOnChartArea:false},
         suggestedMin:290,
         suggestedMax:370
+      }
+    }
+  }
+});
+
+const subChart = new Chart(document.getElementById('subChart'),{
+  type:'line',
+  data:{
+    labels,
+    datasets:[
+      {
+        label:'新品アイテム数',
+        data:itemCounts,
+        borderColor:'#7c3aed',
+        borderWidth:2.5,
+        pointRadius:2,
+        pointHoverRadius:4,
+        tension:0.25,
+        fill:false
+      }
+    ]
+  },
+  options:{
+    responsive:true,
+    maintainAspectRatio:false,
+    interaction:{mode:'index',intersect:false},
+    plugins:{ legend:{display:true} },
+    scales:{
+      x:{ticks:{maxTicksLimit:12}},
+      y:{
+        position:'right',
+        title:{display:true,text:'新品アイテム数'},
+        suggestedMin:12,
+        suggestedMax:26
       }
     }
   }

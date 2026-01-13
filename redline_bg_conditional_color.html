@@ -34,11 +34,13 @@
   }
   .hint{ font-size:12px; color:#6b7280; }
   .chartBox{ height:320px; position:relative; }
+  .chartBox--secondary{ height:220px; margin-top:14px; }
   canvas{ width:100% !important; height:100% !important; display:block; }
   .note{ font-size:12px; color:#6b7280; margin-top:10px; line-height:1.45; }
   @media (max-width:720px){
     .wrapper{ margin:12px; }
     .chartBox{ height:260px; }
+    .chartBox--secondary{ height:200px; }
   }
 </style>
 </head>
@@ -57,6 +59,7 @@
   </div>
 
   <div class="chartBox"><canvas id="chart"></canvas></div>
+  <div class="chartBox chartBox--secondary"><canvas id="subChart"></canvas></div>
 
   <div class="note">
     背景色ルール：<br>
@@ -104,6 +107,22 @@ for(let i=0;i<N;i++){
   else v = 21 + Math.round(noise(2));
   v = clamp(v, 10, 28);
   sellers.push(v);
+}
+
+// 新品アイテム数（下段表示用）
+const itemCounts = [];
+for(let i=0;i<N;i++){
+  let base = 22;
+  if(i < 35) base = 22;
+  else if(i < 65) base = 24;
+  else if(i < 95) base = 23;
+  else if(i < 125) base = 20;
+  else if(i < 150) base = 18;
+  else if(i < 165) base = 15;
+  else base = 17;
+  const jitter = Math.round(noise(1.2));
+  const v = clamp(base + jitter, 12, 26);
+  itemCounts.push(v);
 }
 
 // ランキング
@@ -201,6 +220,40 @@ const chart = new Chart(document.getElementById('chart'),{
       yRank:{ position:'left', suggestedMin:90000, suggestedMax:170000 },
       ySeller:{ position:'right', grid:{drawOnChartArea:false}, suggestedMin:10, suggestedMax:30 },
       yPrice:{ position:'right', offset:true, grid:{drawOnChartArea:false}, suggestedMin:290, suggestedMax:370 }
+    }
+  }
+});
+
+const subChart = new Chart(document.getElementById('subChart'),{
+  type:'line',
+  data:{
+    labels,
+    datasets:[
+      {
+        label:'新品アイテム数',
+        data:itemCounts,
+        borderColor:'#7c3aed',
+        borderWidth:2.5,
+        pointRadius:2,
+        pointHoverRadius:4,
+        tension:0.25,
+        fill:false
+      }
+    ]
+  },
+  options:{
+    responsive:true,
+    maintainAspectRatio:false,
+    interaction:{mode:'index',intersect:false},
+    plugins:{ legend:{display:true} },
+    scales:{
+      x:{ticks:{maxTicksLimit:12}},
+      y:{
+        position:'right',
+        title:{display:true,text:'新品アイテム数'},
+        suggestedMin:12,
+        suggestedMax:26
+      }
     }
   }
 });
