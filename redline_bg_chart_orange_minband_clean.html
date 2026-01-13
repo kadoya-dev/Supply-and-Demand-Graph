@@ -34,19 +34,29 @@
   }
   .hint{ font-size:12px; color:#6b7280; }
   .chartBox{ height:320px; position:relative; }
-  .chartBox--secondary{ height:220px; margin-top:14px; }
   canvas{ width:100% !important; height:100% !important; display:block; }
   .note{ font-size:12px; color:#6b7280; margin-top:10px; line-height:1.45; }
+  .version{
+    position:fixed;
+    right:16px;
+    bottom:12px;
+    font-size:12px;
+    color:#9ca3af;
+    background:rgba(255,255,255,.9);
+    padding:4px 8px;
+    border-radius:999px;
+    box-shadow:0 2px 8px rgba(0,0,0,.08);
+    z-index:10;
+  }
   @media (max-width:720px){
     .wrapper{ margin:12px; }
     .chartBox{ height:260px; }
-    .chartBox--secondary{ height:200px; }
   }
 </style>
 </head>
 <body>
 <div class="wrapper">
-  <h1>ランキング / セラー数 / 価格 + 赤字ライン（画像寄せ・オレンジ系）</h1>
+  <h1>ランキング / セラー数 / 価格（USD） + 赤字ライン（画像寄せ・オレンジ系）</h1>
 
   <div class="controls">
     <label>赤字ライン（USD）</label>
@@ -59,12 +69,12 @@
   </div>
 
   <div class="chartBox"><canvas id="chart"></canvas></div>
-  <div class="chartBox chartBox--secondary"><canvas id="subChart"></canvas></div>
 
   <div class="note">
     過去最安値は「点」ではなく、120日付近を<strong>縦帯の背景</strong>で強調しています（横線なし）。
   </div>
 </div>
+<div class="version">Version: 2025.03.08-01</div>
 
 <script>
 Chart.register(window['chartjs-plugin-annotation']);
@@ -86,13 +96,20 @@ function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
 const price = [];
 for(let i=0;i<N;i++){
   let v;
-  if(i < 45)       v = 350 - (i/45)*4;
-  else if(i < 90)  v = 346 - ((i-45)/45)*11;
-  else if(i < 120) v = 335 - ((i-90)/30)*15;
-  else if(i < 150) v = 320 - ((i-120)/30)*15;
-  else             v = 305 - ((i-150)/30)*5;
-  if(i === 55 || i === 105) v += 18;
-  v = clamp(v + noise(4.2), 290, 365);
+  if(i < 55){               // 180〜126日: 350付近で横ばい
+    v = 352 - (i/55)*6;
+  } else if(i < 95){        // 125〜86日: 345→335
+    v = 346 - ((i-55)/40)*11;
+  } else if(i < 125){       // 85〜56日: 335→322
+    v = 335 - ((i-95)/30)*13;
+  } else if(i < 155){       // 55〜26日: 322→305
+    v = 322 - ((i-125)/30)*17;
+  } else {                  // 25〜1日: 305→300
+    v = 305 - ((i-155)/25)*5;
+  }
+  if(i === 62 || i === 108) v += 16;
+  if(i === 142) v -= 12;
+  v = clamp(v + noise(4.8), 295, 368);
   v = Math.round(v * 10) / 10;
   price.push(v);
 }
@@ -100,44 +117,28 @@ for(let i=0;i<N;i++){
 // セラー数（ステップ）
 const sellers = [];
 for(let i=0;i<N;i++){
-  let v = 12;
-  if(i < 20) v = 12 + Math.round(i/4);
-  else if(i < 45) v = 18 + Math.round(noise(2));
-  else if(i < 75) v = 20 + Math.round(noise(3));
-  else if(i < 105) v = 24 + Math.round(noise(3));
-  else if(i < 130) v = 22 + Math.round(noise(2));
-  else if(i < 150) v = 20 + Math.round(noise(2));
+  let v = 13;
+  if(i < 18) v = 13 + Math.round(i/3);
+  else if(i < 42) v = 18 + Math.round(noise(2));
+  else if(i < 68) v = 20 + Math.round(noise(3));
+  else if(i < 96) v = 24 + Math.round(noise(3));
+  else if(i < 118) v = 22 + Math.round(noise(2));
+  else if(i < 145) v = 20 + Math.round(noise(2));
   else v = 21 + Math.round(noise(2));
-  v = clamp(v, 10, 28);
+  v = clamp(v, 12, 28);
   sellers.push(v);
-}
-
-// 新品アイテム数（下段表示用）
-const itemCounts = [];
-for(let i=0;i<N;i++){
-  let base = 22;
-  if(i < 35) base = 22;
-  else if(i < 65) base = 24;
-  else if(i < 95) base = 23;
-  else if(i < 125) base = 20;
-  else if(i < 150) base = 18;
-  else if(i < 165) base = 15;
-  else base = 17;
-  const jitter = Math.round(noise(1.2));
-  const v = clamp(base + jitter, 12, 26);
-  itemCounts.push(v);
 }
 
 // ランキング（スパイクあり）
 const rank = [];
 let r = 120000;
 for(let i=0;i<N;i++){
-  r += noise(3500);
-  if(i >= 25 && i < 60) r += 800;
-  if(i >= 60 && i < 90) r -= 1200;
-  if(i >= 90 && i < 120) r += 1000;
-  if(i === 110 || i === 148) r += 18000;
-  if(i === 135) r -= 15000;
+  r += noise(4200);
+  if(i >= 24 && i < 58) r += 1000;
+  if(i >= 58 && i < 92) r -= 1400;
+  if(i >= 92 && i < 128) r += 1200;
+  if(i === 104 || i === 152) r += 19000;
+  if(i === 136) r -= 16000;
   r = clamp(r, 90000, 165000);
   rank.push(Math.round(r));
 }
@@ -226,7 +227,7 @@ const chart = new Chart(document.getElementById('chart'),{
     datasets:[
       { label:'ランキング', data:rank, yAxisID:'yRank', borderColor:'#3b82f6', borderWidth:2, pointRadius:0, tension:.25 },
       { label:'セラー数', data:sellers, yAxisID:'ySeller', borderColor:'#fb7185', borderWidth:2, pointRadius:0, tension:0 },
-      { label:'価格(USD)', data:price, yAxisID:'yPrice', borderColor:ORANGE, borderWidth:2, pointRadius:0, tension:0 }
+      { label:'価格（USD）', data:price, yAxisID:'yPrice', borderColor:ORANGE, borderWidth:2, pointRadius:0, tension:0 }
     ]
   },
   options:{
@@ -265,41 +266,7 @@ const chart = new Chart(document.getElementById('chart'),{
       x:{ticks:{maxTicksLimit:12}},
       yRank:{ position:'left', title:{display:true,text:'ランキング'}, suggestedMin:90000, suggestedMax:170000 },
       ySeller:{ position:'right', title:{display:true,text:'セラー数'}, grid:{drawOnChartArea:false}, suggestedMin:10, suggestedMax:30 },
-      yPrice:{ position:'right', offset:true, title:{display:true,text:'価格(USD)'}, grid:{drawOnChartArea:false}, suggestedMin:290, suggestedMax:370 }
-    }
-  }
-});
-
-const subChart = new Chart(document.getElementById('subChart'),{
-  type:'line',
-  data:{
-    labels,
-    datasets:[
-      {
-        label:'新品アイテム数',
-        data:itemCounts,
-        borderColor:'#7c3aed',
-        borderWidth:2.5,
-        pointRadius:2,
-        pointHoverRadius:4,
-        tension:0.25,
-        fill:false
-      }
-    ]
-  },
-  options:{
-    responsive:true,
-    maintainAspectRatio:false,
-    interaction:{mode:'index',intersect:false},
-    plugins:{ legend:{display:true} },
-    scales:{
-      x:{ticks:{maxTicksLimit:12}},
-      y:{
-        position:'right',
-        title:{display:true,text:'新品アイテム数'},
-        suggestedMin:12,
-        suggestedMax:26
-      }
+      yPrice:{ position:'right', offset:true, title:{display:true,text:'価格（USD）'}, grid:{drawOnChartArea:false}, suggestedMin:290, suggestedMax:370 }
     }
   }
 });
