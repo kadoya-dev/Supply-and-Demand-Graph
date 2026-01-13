@@ -35,6 +35,18 @@
   .chartBox{ height:320px; position:relative; }
   canvas{ width:100% !important; height:100% !important; display:block; }
   .note{ font-size:12px; color:#6b7280; margin-top:10px; line-height:1.45; }
+  .version{
+    position:fixed;
+    right:16px;
+    bottom:12px;
+    font-size:12px;
+    color:#9ca3af;
+    background:rgba(255,255,255,.9);
+    padding:4px 8px;
+    border-radius:999px;
+    box-shadow:0 2px 8px rgba(0,0,0,.08);
+    z-index:10;
+  }
   @media (max-width:720px){
     .wrapper{ margin:12px; }
     .chartBox{ height:260px; }
@@ -61,6 +73,7 @@
     🟣 過去最低ライン：紫（価格データの最小値を基準に、背景のみで強調）
   </div>
 </div>
+<div class="version">Version: 2025.03.08-01</div>
 
 <script>
 Chart.register(window['chartjs-plugin-annotation']);
