@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>赤字ライン背景（条件で色変更）- 3パターン比較</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+
+<style>
+  body{
+    margin:0;
+    background:#f3f4f6;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+    color:#111827;
+  }
+  .wrapper{
+    max-width:1100px;
+    margin:24px auto;
+    background:#fff;
+    border-radius:14px;
+    box-shadow:0 10px 28px rgba(0,0,0,.08);
+    padding:16px 18px 18px;
+  }
+  h1{ font-size:15px; margin:0 0 8px; font-weight:700; }
+  h2{ font-size:13px; margin:14px 0 8px; font-weight:700; color:#111827; }
+  .controls{
+    display:flex; flex-wrap:wrap; align-items:center; gap:12px;
+    margin: 8px 0 12px;
+  }
+  .controls label{ font-size:12px; color:#374151; }
+  .controls input[type="number"]{
+    width:80px; padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; font-size:12px;
+  }
+  .hint{ font-size:12px; color:#6b7280; }
+  .chartBox{ height:300px; position:relative; margin-bottom:14px; }
+  canvas{ width:100% !important; height:100% !important; display:block; }
+  .note{ font-size:12px; color:#6b7280; margin-top:10px; line-height:1.45; }
+  @media (max-width:720px){
+    .wrapper{ margin:12px; }
+    .chartBox{ height:250px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <h1>ランキング / セラー数 / 価格 + 赤字ライン（背景色）｜3パターン比較</h1>
+
+  <div class="controls">
+    <label>赤字ライン（USD）</label>
+    <input id="lossInput" type="number" step="0.1" value="5.7">
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input id="lossToggle" type="checkbox" checked>
+      赤字ライン表示
+    </label>
+    <span class="hint">最安値が赤字ラインより上：背景＝青 / 下：背景＝赤（濃さ＝乖離率3段階）</span>
+  </div>
+
+  <h2>パターンA（元データ相当）</h2>
+  <div class="chartBox"><canvas id="chartA"></canvas></div>
+
+  <h2>パターンB（価格が上下しやすい）</h2>
+  <div class="chartBox"><canvas id="chartB"></canvas></div>
+
+  <h2>パターンC（ゆるやか下落→急落→反発）</h2>
+  <div class="chartBox"><canvas id="chartC"></canvas></div>
+
+  <div class="note">
+    背景色ルール（乖離率で3段階）：<br>
+    ・過去最安値（データ全体のmin）と <strong>赤字ライン</strong> の乖離率 ＝ |赤字ライン - 過去最安値| / 赤字ライン × 100<br>
+    ・過去最安値が <strong>赤字ライン以上</strong> → 青（割っていない）<br>
+    ・過去最安値が <strong>赤字ライン未満</strong> → 赤（割ったことがある）<br>
+    ・濃さ：<strong>〜4.99%</strong>（薄） / <strong>5%〜9.99%</strong>（中） / <strong>10%以上</strong>（濃）
+  </div>
+</div>
+
+<script>
+Chart.register(window['chartjs-plugin-annotation']);
+
+// ===== 共通：赤字ライン（入力で変更） =====
+let LOSS_LINE = 5.7;
+
+// ===== 色 =====
+const ORANGE = '#f59e0b';
+
+// 背景色（3段階）：乖離率で濃さを変える（青=割っていない / 赤=割ったことがある）
+const LOSS_FILL_BLUE_1 = 'rgba(59, 130, 246, .08)'; // 〜4.99%
+const LOSS_FILL_BLUE_2 = 'rgba(59, 130, 246, .14)'; // 5%〜9.99%
+const LOSS_FILL_BLUE_3 = 'rgba(59, 130, 246, .22)'; // 10%〜
+
+const LOSS_FILL_RED_1  = 'rgba(220, 38, 38, .08)';  // 〜4.99%
+const LOSS_FILL_RED_2  = 'rgba(220, 38, 38, .14)';  // 5%〜9.99%
+const LOSS_FILL_RED_3  = 'rgba(220, 38, 38, .22)';  // 10%〜
+
+// 乖離率（%）= |赤字ライン - 過去最安値| / 赤字ライン * 100
+function getDivergencePct(minPrice, lossLine){
+  if(!isFinite(lossLine) || lossLine === 0) return 0;
+  return Math.abs((lossLine - minPrice) / lossLine) * 100;
+}
+
+function computeLossFill(priceArray, lossLine){
+  const minPrice = Math.min(...priceArray);
+  const divPct = getDivergencePct(minPrice, lossLine);
+
+  // 濃さ（3段階）：<5% / 5%〜<10% / 10%〜
+  let level = 1;
+  if(divPct >= 10) level = 3;
+  else if(divPct >= 5) level = 2;
+
+  const isBad = (minPrice < lossLine); // 割ったことがあるなら赤
+  if(!isBad){
+    return (level === 3) ? LOSS_FILL_BLUE_3 : (level === 2) ? LOSS_FILL_BLUE_2 : LOSS_FILL_BLUE_1;
+  }else{
+    return (level === 3) ? LOSS_FILL_RED_3 : (level === 2) ? LOSS_FILL_RED_2 : LOSS_FILL_RED_1;
+  }
+}
+
+// ===== 背景プラグイン（赤字ライン以下を塗る） =====
+const lossBgPlugin = {
+  id:'lossBg',
+  beforeDatasetsDraw(chart,args,opts){
+    if(opts && opts.enabled === false) return;
+    const {ctx,chartArea,scales}=chart;
+    if(!chartArea) return;
+
+    const y = scales.yPrice.getPixelForValue(opts.loss);
+
+    ctx.save();
+    ctx.fillStyle = opts.fill;
+    ctx.fillRect(chartArea.left, y, chartArea.right-chartArea.left, chartArea.bottom-y);
+    ctx.restore();
+  }
+};
+Chart.register(lossBgPlugin);
+
+// ===== データ生成 =====
+function makeRng(seed){
+  let s = seed >>> 0;
+  return function(){
+    s = (s * 1664525 + 1013904223) % 4294967296;
+    return s / 4294967296;
+  }
+}
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+
+function buildData(pattern){
+  const N = 180;
+  const labels = Array.from({length:N}, (_,i)=> `${N-i}日`);
+  const rand = makeRng(pattern.seed);
+  const noise = (scale)=> (rand()-0.5) * scale;
+
+  // 価格（パターン別）
+  const price = [];
+  for(let i=0;i<N;i++){
+    let v;
+
+    if(pattern.type === 'A'){
+      if(i < 15)       v = 12 - (i/15)*1.8;
+      else if(i < 60)  v = 10.2 - ((i-15)/45)*0.8;
+      else if(i < 110) v = 9.4 - ((i-60)/50)*0.4;
+      else if(i < 140) v = 9.0 + ((i-110)/30)*0.4;
+      else if(i < 155) v = 9.4 - ((i-140)/15)*0.7;
+      else if(i < 165) v = 8.7 - ((i-155)/10)*2.5;
+      else             v = 6.2 + ((i-165)/15)*0.4;
+      v = clamp(v + noise(0.14), 5.6, 12.2);
+
+    }else if(pattern.type === 'B'){
+      // 上下しやすい（割りやすいケース）
+      v = 8.8 + Math.sin(i/7)*0.8 + Math.sin(i/17)*0.5;
+      if(i > 120 && i < 145) v -= 0.9;         // 期間的な弱含み
+      if(i > 150 && i < 160) v -= 2.0;         // 一時急落
+      v = clamp(v + noise(0.25), 5.2, 12.0);
+
+    }else{ // 'C'
+      // ゆるやか下落→急落→反発
+      if(i < 70)        v = 11.2 - (i/70)*2.0;
+      else if(i < 125)  v = 9.2 - ((i-70)/55)*1.2;
+      else if(i < 150)  v = 8.0 - ((i-125)/25)*2.4;  // 急落
+      else              v = 5.6 + ((i-150)/30)*2.1;  // 反発
+      v = clamp(v + noise(0.18), 4.9, 12.2);
+    }
+
+    v = Math.round(v * 10) / 10;
+    price.push(v);
+  }
+
+  // セラー数
+  const sellers = [];
+  for(let i=0;i<N;i++){
+    let v = 7;
+    if(pattern.type === 'A'){
+      if(i < 70) v = 7;
+      else if(i < 95) v = 6;
+      else if(i < 120) v = 8;
+      else if(i < 150) v = 7;
+      else if(i < 160) v = 8;
+      else if(i < 172) v = 12;
+      else v = 11;
+    }else if(pattern.type === 'B'){
+      v = 6 + Math.round(Math.abs(Math.sin(i/10))*4);
+      if(i > 150) v += 2;
+      v = clamp(v, 5, 13);
+    }else{
+      v = 7;
+      if(i > 90 && i < 125) v = 6;
+      if(i >= 125 && i < 150) v = 9;
+      if(i >= 150) v = 8;
+    }
+    sellers.push(v);
+  }
+
+  // ランキング
+  const rank = [];
+  let r = (pattern.type === 'B') ? 61000 : 55500;
+  for(let i=0;i<N;i++){
+    r += noise(pattern.type === 'B' ? 1100 : 700);
+    if(pattern.type === 'A'){
+      if(i === 92 || i === 118) r += 6500;
+      if(i === 100) r -= 4500;
+    }else if(pattern.type === 'B'){
+      if(i === 60 || i === 140) r += 8000;
+      if(i === 152) r -= 9000;
+    }else{
+      if(i === 80) r += 5000;
+      if(i === 150) r += 10000;
+      if(i === 162) r -= 7000;
+    }
+    r = clamp(r, 46000, 72000);
+    rank.push(Math.round(r));
+  }
+
+  return {labels, price, sellers, rank};
+}
+
+// ===== チャート生成 =====
+function createChart(canvasId, dataObj){
+  return new Chart(document.getElementById(canvasId),{
+    type:'line',
+    data:{
+      labels: dataObj.labels,
+      datasets:[
+        { label:'ランキング', data:dataObj.rank, yAxisID:'yRank', borderColor:'#3b82f6', borderWidth:2, pointRadius:0 },
+        { label:'セラー数', data:dataObj.sellers, yAxisID:'ySeller', borderColor:'#fb7185', borderWidth:2, pointRadius:0 },
+        { label:'価格(USD)', data:dataObj.price, yAxisID:'yPrice', borderColor:ORANGE, borderWidth:2, pointRadius:0 }
+      ]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:true},
+        lossBg:{ enabled:true, loss:LOSS_LINE, fill: computeLossFill(dataObj.price, LOSS_LINE) },
+        annotation:{
+          annotations:{
+            loss:{
+              type:'line',
+              display:true,
+              yMin:LOSS_LINE,
+              yMax:LOSS_LINE,
+              yScaleID:'yPrice',
+              borderColor: ORANGE,
+              borderDash:[6,6],
+              borderWidth:1.5,
+              label:{
+                display:true,
+                content:'赤字ライン',
+                position:'end',
+                backgroundColor:'rgba(255,255,255,.92)',
+                color: ORANGE,
+                padding:6,
+                borderRadius:8
+              }
+            }
+          }
+        }
+      },
+      scales:{
+        x:{ticks:{maxTicksLimit:12}},
+        yRank:{ position:'left', suggestedMin:48000, suggestedMax:68000 },
+        ySeller:{ position:'right', grid:{drawOnChartArea:false}, suggestedMin:5, suggestedMax:13 },
+        yPrice:{ position:'right', offset:true, grid:{drawOnChartArea:false}, suggestedMin:4.8, suggestedMax:12.5 }
+      }
+    }
+  });
+}
+
+const dataA = buildData({type:'A', seed:42});
+const dataB = buildData({type:'B', seed:202});
+const dataC = buildData({type:'C', seed:777});
+
+const chartA = createChart('chartA', dataA);
+const chartB = createChart('chartB', dataB);
+const chartC = createChart('chartC', dataC);
+
+const charts = [
+  {chart: chartA, data: dataA},
+  {chart: chartB, data: dataB},
+  {chart: chartC, data: dataC},
+];
+
+// ===== UI: 入力で赤字ライン更新（全グラフ） =====
+const lossInput = document.getElementById('lossInput');
+const lossToggle = document.getElementById('lossToggle');
+
+function updateAllChartsLoss(v){
+  charts.forEach(({chart, data})=>{
+    chart.options.plugins.lossBg.loss = v;
+    chart.options.plugins.lossBg.fill = computeLossFill(data.price, v);
+
+    chart.options.plugins.annotation.annotations.loss.yMin = v;
+    chart.options.plugins.annotation.annotations.loss.yMax = v;
+  });
+}
+
+lossInput.addEventListener('input', ()=>{
+  const v = parseFloat(lossInput.value);
+  if(isNaN(v)) return;
+  LOSS_LINE = v;
+
+  updateAllChartsLoss(v);
+  charts.forEach(({chart})=> chart.update());
+});
+
+// ===== UI: 赤字ライン ON/OFF（点線＋背景） =====
+lossToggle.addEventListener('change', ()=>{
+  const show = lossToggle.checked;
+  charts.forEach(({chart})=>{
+    chart.options.plugins.lossBg.enabled = show;
+    chart.options.plugins.annotation.annotations.loss.display = show;
+    chart.update();
+  });
+});
+</script>
+</body>
+</html>

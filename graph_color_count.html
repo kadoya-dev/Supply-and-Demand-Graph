@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>赤字ライン背景（条件で色変更）</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+
+<style>
+  body{
+    margin:0;
+    background:#f3f4f6;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+    color:#111827;
+  }
+  .wrapper{
+    max-width:1100px;
+    margin:24px auto;
+    background:#fff;
+    border-radius:14px;
+    box-shadow:0 10px 28px rgba(0,0,0,.08);
+    padding:16px 18px 18px;
+  }
+  h1{ font-size:15px; margin:0 0 8px; font-weight:700; }
+  .controls{
+    display:flex; flex-wrap:wrap; align-items:center; gap:12px;
+    margin: 8px 0 8px;
+  }
+  .controls label{ font-size:12px; color:#374151; }
+  .controls input[type="number"]{
+    width:80px; padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; font-size:12px;
+  }
+  .hint{ font-size:12px; color:#6b7280; }
+  .chartBox{ height:320px; position:relative; }
+  canvas{ width:100% !important; height:100% !important; display:block; }
+  .note{ font-size:12px; color:#6b7280; margin-top:10px; line-height:1.45; }
+  @media (max-width:720px){
+    .wrapper{ margin:12px; }
+    .chartBox{ height:260px; }
+  }
+
+  .chartBlock{ margin-top:18px; }
+  .chartBlock h2{ margin:8px 0 8px; font-size:14px; font-weight:700; color:#0f172a; }
+</style>
+
+</head>
+<body>
+<div class="wrapper">
+  <h1>ランキング / セラー数 / 価格 + 赤字ライン（最安値で背景色が変わる）</h1>
+
+  <div class="controls">
+    <label>赤字ライン（USD）</label>
+    <input id="lossInput" type="number" step="0.1" value="5.7">
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input id="lossToggle" type="checkbox" checked>
+      赤字ライン表示
+    </label>
+    <span class="hint" id="lossCountHint">計測中…</span>
+  </div>
+
+  
+  <div class="chartBlock">
+    <h2>パターンA（現在のデータ）</h2>
+    <div class="chartBox"><canvas id="chart1"></canvas></div>
+  </div>
+
+  <div class="chartBlock">
+    <h2>パターンB（上下に振れやすい）</h2>
+    <div class="chartBox"><canvas id="chart2"></canvas></div>
+  </div>
+
+  <div class="chartBlock">
+    <h2>パターンC（緩やかに下落 → 反発）</h2>
+    <div class="chartBox"><canvas id="chart3"></canvas></div>
+  </div>
+
+
+  <div class="note">
+    背景色ルール：<br>
+    ・「過去最安値（その時点までの最安）」が赤字ラインを <strong>下回った回数</strong> をカウントし、回数が多いほど濃い赤にします。<br>
+    ・0回：薄青 / 1回以上：薄赤 / 3回以上：中赤 / 5回以上：濃赤
+  </div>
+</div>
+
+<script>
+Chart.register(window['chartjs-plugin-annotation']);
+
+// ===== 共通設定 =====
+const N = 180;
+const labels = Array.from({length:N}, (_,i)=> `${N-i}日`);
+
+// 色（背景塗り）
+const LOSS_FILL_LEVEL0 = 'rgba(59,130,246,0.14)'; // 青（0回）
+const LOSS_FILL_LEVEL1 = 'rgba(239,68,68,0.14)';  // 1回以上
+const LOSS_FILL_LEVEL3 = 'rgba(239,68,68,0.26)';  // 3回以上
+const LOSS_FILL_LEVEL5 = 'rgba(239,68,68,0.40)';  // 5回以上
+
+function pickLossFillByCount(count){
+  if(count >= 5) return LOSS_FILL_LEVEL5;
+  if(count >= 3) return LOSS_FILL_LEVEL3;
+  if(count >= 1) return LOSS_FILL_LEVEL1;
+  return LOSS_FILL_LEVEL0;
+}
+
+// “過去最安値（ランニング最小）”を作りつつ、赤字ラインを下回った回数を数える
+// ※ここでの「回数」＝「過去最安値が更新された回数」のうち、更新後の値が赤字ライン未満だった回数
+function computePastLowAndCount(priceArr, lossLine){
+  const pastLow = [];
+  let min = Infinity;
+  let count = 0;
+
+  for(let i=0;i<priceArr.length;i++){
+    const v = priceArr[i];
+    const prevMin = min;
+    if(v < min){
+      min = v;
+      // 最安値が「更新」された瞬間だけカウント対象
+      if(prevMin !== Infinity && min < lossLine) count++;
+      if(prevMin === Infinity && min < lossLine) count++; // 初期最安値もカウントしたい場合はこちらを残す
+    }
+    pastLow.push(min);
+  }
+  return { pastLow, count, fill: pickLossFillByCount(count) };
+}
+
+// ===== 背景塗りプラグイン（赤字ライン以下の領域を塗る） =====
+const lossBgPlugin = {
+  id:'lossBg',
+  beforeDraw(chart){
+    const s = chart.$lossStats;
+    if(!s) return;
+
+    const {ctx, chartArea, scales} = chart;
+    if(!chartArea) return;
+
+    const y = scales.yPrice.getPixelForValue(chart.$lossLineValue);
+    ctx.save();
+    ctx.fillStyle = s.fill;
+    ctx.fillRect(chartArea.left, y, chartArea.right - chartArea.left, chartArea.bottom - y);
+    ctx.restore();
+  }
+};
+
+// ===== データ生成（3パターン） =====
+function randFactory(seed){
+  let s = seed >>> 0;
+  return function(){
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  }
+}
+function noise(rand, scale){ return (rand()-0.5) * scale; }
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+
+function makeRankAndSellers(seed){
+  const rand = randFactory(seed);
+  const rank = [];
+  const sellers = [];
+  let r = 52000;
+  let s = 11.0;
+
+  for(let i=0;i<N;i++){
+    r += noise(rand, 700);
+    if(i === 92 || i === 118) r += 6500;
+    if(i === 100) r -= 4500;
+    r = clamp(r, 49000, 67000);
+    rank.push(Math.round(r));
+
+    s += noise(rand, 0.8);
+    if(i === 95) s -= 1.8;
+    if(i === 125) s += 1.2;
+    s = clamp(s, 8.2, 15.5);
+    sellers.push(Math.round(s*10)/10);
+  }
+  return {rank, sellers};
+}
+
+function makePricePatternA(){
+  // 元の見え方に近い
+  const rand = randFactory(42);
+  const price = [];
+  for(let i=0;i<N;i++){
+    let v;
+    if(i < 15) v = 6.7 - (i/15)*0.3;
+    else if(i < 60) v = 6.4 - ((i-15)/45)*0.35;
+    else if(i < 110) v = 9.4 - ((i-60)/50)*0.4;
+    else if(i < 140) v = 9.0 - ((i-110)/30)*1.8;
+    else if(i < 165) v = 7.2 - ((i-140)/25)*1.0;
+    else v = 6.2 + ((i-165)/15)*0.4;
+    v = clamp(v + noise(rand, 0.14), 5.6, 9.8);
+    price.push(Math.round(v*100)/100);
+  }
+  return price;
+}
+
+function makePricePatternB(){
+  // 上下に振れやすい（下抜け回数が増えやすい）
+  const rand = randFactory(99);
+  const price = [];
+  let base = 7.2;
+  for(let i=0;i<N;i++){
+    // トレンド少なめ + 振れ幅大きめ
+    base += noise(rand, 0.10);
+    let v = base + Math.sin(i/7)*0.55 + noise(rand, 0.35);
+    // ところどころ急落
+    if(i === 40 || i === 88 || i === 132) v -= 0.9;
+    v = clamp(v, 5.4, 9.6);
+    price.push(Math.round(v*100)/100);
+  }
+  return price;
+}
+
+function makePricePatternC(){
+  // 緩やかに下落 → 反発（下抜けしやすいゾーンを作る）
+  const rand = randFactory(7);
+  const price = [];
+  for(let i=0;i<N;i++){
+    let v;
+    if(i < 70) v = 8.6 - (i/70)*1.9;          // 下落
+    else if(i < 120) v = 6.7 - ((i-70)/50)*0.8; // じわ下げ
+    else if(i < 155) v = 5.9 + ((i-120)/35)*1.2; // 反発
+    else v = 7.1 + ((i-155)/25)*0.4;            // 上げ
+    v = clamp(v + noise(rand, 0.18), 5.2, 9.8);
+    price.push(Math.round(v*100)/100);
+  }
+  return price;
+}
+
+// ===== チャート生成 =====
+function buildChart(canvasId, seed, priceArr){
+  const {rank, sellers} = makeRankAndSellers(seed);
+
+  const chart = new Chart(document.getElementById(canvasId),{
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        {label:'ランキング', data:rank, yAxisID:'yRank', borderColor:'#3b82f6', borderWidth:2, pointRadius:0},
+        {label:'セラー数', data:sellers, yAxisID:'ySeller', borderColor:'#f59e0b', borderWidth:2, pointRadius:0},
+        {label:'価格', data:priceArr, yAxisID:'yPrice', borderColor:'#10b981', borderWidth:2, pointRadius:0},
+        {label:'過去最安値', data:[], yAxisID:'yPrice', borderColor:'#64748b', borderWidth:2, borderDash:[6,6], pointRadius:0},
+      ]
+    },
+    plugins:[lossBgPlugin],
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      interaction:{mode:'index', intersect:false},
+      plugins:{
+        legend:{position:'top'},
+        tooltip:{callbacks:{label:(ctx)=> `${ctx.dataset.label}: ${ctx.parsed.y}`}},
+        annotation:{
+          annotations:{
+            loss:{
+              type:'line',
+              yMin: 6.3,
+              yMax: 6.3,
+              borderColor:'#ef4444',
+              borderWidth:2,
+              borderDash:[4,4],
+              label:{display:true, content:'赤字ライン', enabled:true, position:'start'}
+            }
+          }
+        }
+      },
+      scales:{
+        x:{ticks:{maxTicksLimit:12}},
+        yRank:{ position:'left', reverse:true, grid:{drawOnChartArea:false}, title:{display:true, text:'ランキング'} },
+        ySeller:{ position:'right', offset:true, grid:{drawOnChartArea:false}, title:{display:true, text:'セラー数'} },
+        yPrice:{ position:'right', offset:true, grid:{drawOnChartArea:false}, title:{display:true, text:'価格'} }
+      }
+    }
+  });
+
+  chart.$priceArr = priceArr;
+  return chart;
+}
+
+const priceA = makePricePatternA();
+const priceB = makePricePatternB();
+const priceC = makePricePatternC();
+
+const charts = [
+  buildChart('chart1', 1, priceA),
+  buildChart('chart2', 2, priceB),
+  buildChart('chart3', 3, priceC),
+];
+
+// ===== UI（共通入力で3つ同時に更新） =====
+const lossInput = document.getElementById('lossInput');
+const lossToggle = document.getElementById('lossToggle');
+const lossCountHint = document.getElementById('lossCountHint');
+
+function updateAll(){
+  const v = parseFloat(lossInput.value || '0') || 0;
+
+  // 3つのチャートを更新
+  const counts = [];
+  charts.forEach((ch)=>{
+    ch.$lossLineValue = v;
+    const stats = computePastLowAndCount(ch.$priceArr, v);
+    ch.$lossStats = stats;
+
+    // 過去最安値（点線）データ差し替え
+    ch.data.datasets[3].data = stats.pastLow;
+
+    // annotation の赤字ライン
+    ch.options.plugins.annotation.annotations.loss.yMin = v;
+    ch.options.plugins.annotation.annotations.loss.yMax = v;
+
+    // 点線表示切替
+    const show = !!lossToggle.checked;
+    ch.data.datasets[3].hidden = !show;
+
+    ch.update();
+    counts.push(stats.count);
+  });
+
+  // 表示：3つまとめて
+  const maxCount = Math.max(...counts);
+  let level = '青（0回）';
+  if(maxCount >= 5) level = '濃赤（5回以上）';
+  else if(maxCount >= 3) level = '中赤（3回以上）';
+  else if(maxCount >= 1) level = '薄赤（1回以上）';
+
+  lossCountHint.textContent = `下回った回数：A=${counts[0]} / B=${counts[1]} / C=${counts[2]}（最大 ${maxCount}回 → ${level}）`;
+}
+
+lossInput.addEventListener('input', updateAll);
+lossToggle.addEventListener('change', updateAll);
+
+// 初期描画
+updateAll();
+</script>
+</body>
+</html>
