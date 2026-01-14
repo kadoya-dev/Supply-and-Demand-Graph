@@ -1,0 +1,543 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>画像寄せ + 赤字ライン + 過去最安値(縦帯)（オレンジ系）</title>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
+
+<style>
+  body{
+    margin:0;
+    background:#f3f4f6;
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif;
+    color:#111827;
+  }
+  .wrapper{
+    max-width:1100px;
+    margin:24px auto;
+    background:#fff;
+    border-radius:14px;
+    box-shadow:0 10px 28px rgba(0,0,0,.08);
+    padding:16px 18px 18px;
+  }
+  h1{ font-size:15px; margin:0 0 8px; font-weight:700; }
+  .controls{
+    display:flex; flex-wrap:wrap; align-items:center; gap:10px;
+    margin: 8px 0 8px;
+  }
+  .controls label{ font-size:12px; color:#374151; }
+  .controls input[type="number"]{
+    width:80px; padding:4px 6px; border:1px solid #d1d5db; border-radius:6px; font-size:12px;
+  }
+  .hint{ font-size:12px; color:#6b7280; }
+  .chartBox{ height:320px; position:relative; }
+  canvas{ width:100% !important; height:100% !important; display:block; }
+  .note{ font-size:12px; color:#6b7280; margin-top:10px; line-height:1.45; }
+  @media (max-width:720px){
+    .wrapper{ margin:12px; }
+    .chartBox{ height:260px; }
+  }
+
+#chartA,#chartB,#chartC{ height:360px; width:100%; }
+</style>
+</head>
+<body>
+<div class="wrapper">
+  <h1>ランキング / セラー数 / 価格 + 赤字ライン（画像寄せ・オレンジ系）</h1>
+
+  <div class="controls">
+    <label>赤字ライン（USD）</label>
+    <input id="lossInput" type="number" step="0.1" value="5.7">
+    <label style="display:flex;align-items:center;gap:6px;">
+      <input id="lossToggle" type="checkbox" checked>
+      赤字ラインを表示
+    </label>
+    <span class="hint">※OFFで「点線＋背景」をまとめて非表示</span>
+  </div>
+
+  <div class="chartBox"><canvas id="chartA"></canvas>
+    <div style="height:18px"></div>
+    <canvas id="chartB"></canvas>
+    <div style="height:18px"></div>
+    <canvas id="chartC"></canvas></canvas></div>
+
+  <div class="note">
+    過去最安値は「点」ではなく、<strong>実データの過去最安値</strong>（価格配列のmin）に一致する箇所を
+    <strong>縦帯の背景</strong>で強調しています（同値が複数ある場合は複数帯・横線なし）。
+  </div>
+</div>
+
+<script>
+Chart.register(window['chartjs-plugin-annotation']);
+
+/** 画像寄せの疑似データ（決め打ち + 微小ノイズ） */
+const N = 180;
+const labels = Array.from({length:N}, (_,i)=> `${N-i}日`);
+
+// 乱数（再現性）
+let seed = 42;
+function rand(){
+  seed = (seed * 1664525 + 1013904223) % 4294967296;
+  return seed / 4294967296;
+}
+function noise(scale){ return (rand()-0.5) * scale; }
+function clamp(v,a,b){ return Math.max(a, Math.min(b, v)); }
+
+// 価格（USD）
+const price = [];
+for(let i=0;i<N;i++){
+  let v;
+  if(i < 15)       v = 12 - (i/15)*1.8;                     // 12→10.2
+  else if(i < 60)  v = 10.2 - ((i-15)/45)*0.8;              // 10.2→9.4
+  else if(i < 110) v = 9.4 - ((i-60)/50)*0.4;               // 9.4→9.0
+  else if(i < 140) v = 9.0 + ((i-110)/30)*0.4;              // 9.0→9.4
+  else if(i < 155) v = 9.4 - ((i-140)/15)*0.7;              // 9.4→8.7
+  else if(i < 165) v = 8.7 - ((i-155)/10)*2.5;              // 8.7→6.2
+  else             v = 6.2 + ((i-165)/15)*0.4;              // 6.2→6.6
+
+  v = clamp(v + noise(0.14), 5.6, 12.2);
+  v = Math.round(v * 10) / 10;
+  price.push(v);
+}
+
+// ===== 補正：最安値調整 =====
+for (let i = 0; i < labels.length; i++) {
+  if (labels[i] === '13日') {
+    // 13日は最安値から外す
+    price[i] = 6.4;
+  }
+  if (labels[i] === '6日') {
+    // 6日を最安値として追加
+    price[i] = 6.2;
+  }
+}
+
+// ===== 過去最安値（データから自動検出） =====
+const minPriceValue = Math.min(...price);
+// 同値が複数ある場合はすべて拾う（小数誤差対策で近似も許容）
+const minIndices = [];
+for (let i = 0; i < price.length; i++) {
+  if (Math.abs(price[i] - minPriceValue) < 1e-9) {
+    minIndices.push(i);
+  }
+}
+
+// セラー数（ステップ）
+const sellers = [];
+for(let i=0;i<N;i++){
+  let v = 7;
+  if(i < 70) v = 7;
+  else if(i < 95) v = 6;
+  else if(i < 120) v = 8;
+  else if(i < 150) v = 7;
+  else if(i < 160) v = 8;
+  else if(i < 172) v = 12;
+  else v = 11;
+  sellers.push(v);
+}
+
+// ランキング（スパイクあり）
+const rank = [];
+let r = 55500;
+for(let i=0;i<N;i++){
+  r += noise(700);
+  if(i >= 30 && i < 45) r += 250;
+  if(i >= 45 && i < 55) r -= 350;
+  if(i >= 60 && i < 75) r += 300;
+  if(i >= 75 && i < 85) r -= 280;
+
+  if(i === 92 || i === 118) r += 6500;
+  if(i === 100) r -= 4500;
+  if(i > 140) r += 120;
+
+  r = clamp(r, 49000, 67000);
+  rank.push(Math.round(r));
+}
+
+// ===== 過去最安値を強調（縦帯） =====
+
+// ===== 赤字ライン（入力で変更） =====
+let LOSS_LINE = 5.7;
+
+// ===== オレンジ系 =====
+const ORANGE = '#f59e0b';
+const ORANGE_LINE = 'rgba(245,158,11,.85)';
+const ORANGE_FILL = 'rgba(245, 158, 11, 0.12)';
+
+// ===== 過去最安値（120日付近）を「縦帯の背景」で強調（横線なし） =====
+const minBandPlugin = {
+  id: 'minBand',
+  beforeDatasetsDraw(chart, args, opts){
+    if(!opts || opts.enabled === false) return;
+    const {ctx, chartArea, scales} = chart;
+    if(!chartArea) return;
+
+    const xScale = scales.x;
+
+    // 単一 index も配列 indices も受け付ける
+    const indices = Array.isArray(opts.indices) ? opts.indices
+                  : (Number.isFinite(opts.index) ? [opts.index] : []);
+
+    if(indices.length === 0) return;
+
+    // まず各 index の「縦帯レンジ」を作って、重なっているものは結合してから描画（濃さが二重に見えるのを防ぐ）
+    const ranges = indices
+      .map(idx => {
+        const x = xScale.getPixelForValue(idx);
+        // 縦帯の見た目（濃さ/太さ）が日付でブレないように、幅は固定pxにする
+        const half = (opts.bandHalfWidthPx ?? 5); // 例: 5px → 幅10px
+        return {left: x - half, right: x + half, x};
+      })
+      .sort((a,b) => a.left - b.left);
+
+    const merged = [];
+    for(const r of ranges){
+      const last = merged[merged.length-1];
+      if(!last || r.left > last.right){
+        merged.push({left:r.left, right:r.right, x:r.x});
+      }else{
+        last.right = Math.max(last.right, r.right);
+        // ラベル位置用 x は一番左のままでもOK（必要なら中央値にしてもよい）
+      }
+    }
+
+    ctx.save();
+    ctx.fillStyle = opts.fill || ORANGE_FILL;
+
+    merged.forEach((r, k) => {
+      ctx.fillRect(r.left, chartArea.top, (r.right - r.left), chartArea.bottom - chartArea.top);
+
+      // ラベルは最初の帯だけに表示（複数最安値でもラベルが散らばりすぎないように）
+      if(opts.label && k === 0){
+        ctx.font = '12px -apple-system,BlinkMacSystemFont,"Segoe UI","Hiragino Kaku Gothic ProN","Yu Gothic",Meiryo,sans-serif';
+        const text = opts.label;
+        const pad = 6;
+        const w = ctx.measureText(text).width;
+        const xForLabel = (r.left + r.right) / 2;
+        const bx = Math.min(chartArea.right - (w + pad*2), Math.max(chartArea.left, xForLabel - w/2 - pad));
+        const by = chartArea.top + 8;
+
+        ctx.fillStyle = 'rgba(255,255,255,.92)';
+        const bh = 22, bw = w + pad*2, rr = 8;
+        ctx.beginPath();
+        ctx.moveTo(bx+rr, by);
+        ctx.arcTo(bx+bw, by, bx+bw, by+bh, rr);
+        ctx.arcTo(bx+bw, by+bh, bx, by+bh, rr);
+        ctx.arcTo(bx, by+bh, bx, by, rr);
+        ctx.arcTo(bx, by, bx+bw, by, rr);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = opts.labelColor || ORANGE;
+        ctx.fillText(text, bx + pad, by + 15);
+      }
+    });
+
+    ctx.restore();
+  }
+};
+Chart.register(minBandPlugin);
+
+// ===== 赤字ラインの背景（ラインより下を全面塗り） =====
+const lossBgPlugin = {
+  id:'lossBg',
+  beforeDatasetsDraw(chart,args,opts){
+    if(opts && opts.enabled === false) return; // OFF時は描画しない
+    const {ctx,chartArea,scales}=chart;
+    if(!chartArea) return;
+    const y = scales.yPrice.getPixelForValue(opts.loss);
+    ctx.save();
+    ctx.fillStyle = ORANGE_FILL;
+    ctx.fillRect(chartArea.left, y, chartArea.right-chartArea.left, chartArea.bottom-y);
+    ctx.restore();
+  }
+};
+Chart.register(lossBgPlugin);
+
+// ===== チャート =====
+
+function makeRand(seed0){
+  let s = seed0 >>> 0;
+  return function(){
+    s = (s * 1664525 + 1013904223) % 4294967296;
+    return s / 4294967296;
+  };
+}
+function makeNoise(rnd, scale){ return (rnd()-0.5) * scale; }
+
+// チャート生成（過去最安値の縦帯は「1本だけ」= 最安値が初めて出現した日だけ表示）
+function buildChart(canvasId, labels, price, sellers, rank){
+  const minPrice = Math.min(...price);
+  const minIdxs = [];
+  for(let i=0;i<price.length;i++){
+    if(Math.abs(price[i]-minPrice) < 1e-9) minIdxs.push(i);
+  }
+  const minIdxsToShow = (minIdxs.length>0) ? [minIdxs[0]] : []; // 2本目以降は表示しない
+  const minLabel = `過去最安値 ${minPrice.toFixed(1)}`;
+
+  return new Chart(document.getElementById(canvasId),{
+    type:'line',
+    data:{
+      labels,
+      datasets:[
+        { label:'ランキング', data:rank, yAxisID:'yRank', borderColor:'#3b82f6', borderWidth:2, pointRadius:0, tension:.25 },
+        { label:'セラー数', data:sellers, yAxisID:'ySeller', borderColor:'#fb7185', borderWidth:2, pointRadius:0, tension:0 },
+        { label:'価格(USD)', data:price, yAxisID:'yPrice', borderColor:ORANGE, borderWidth:2, pointRadius:0, tension:0 }
+      ]
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:true},
+        minBand:{ enabled:true, indices: minIdxsToShow, fill: ORANGE_FILL, label:minLabel, labelColor: ORANGE, bandHalfWidthPx: 6 },
+        lossBg:{ enabled:true, loss:LOSS_LINE },
+        annotation:{
+          annotations:{
+            loss:{
+              type:'line',
+              display:true,
+              yMin:LOSS_LINE,
+              yMax:LOSS_LINE,
+              yScaleID:'yPrice',
+              borderColor: ORANGE,
+              borderDash:[6,6],
+              borderWidth:1.5,
+              label:{
+                display:true,
+                content:'赤字ライン',
+                position:'end',
+                backgroundColor:'rgba(255,255,255,.92)',
+                color: ORANGE,
+                padding:6,
+                borderRadius:8
+              }
+            }
+          }
+        }
+      },
+      scales:{
+        x:{ grid:{ color:'rgba(0,0,0,.06)'} },
+        yRank:{ position:'left', reverse:true, grid:{drawOnChartArea:true}, ticks:{ maxTicksLimit:6 } },
+        ySeller:{ position:'right', grid:{ drawOnChartArea:false}, suggestedMin:0, suggestedMax:16 },
+        yPrice:{ position:'right', grid:{ drawOnChartArea:false}, suggestedMin:4.8, suggestedMax:12.5 }
+      }
+    }
+  });
+}
+
+// ===== 追加パターン（見え方確認用） =====
+// 目的：
+// 1) B/Cは「下がるタイミング」をAとずらす（同じ形に見えないように）
+// 2) セラー数↔価格はざっくり逆相関（セラー減→価格↑ / セラー増→価格↓）
+// 3) ランキングはなだらかに変動（EMAで平滑化）
+
+function mean(arr){ return arr.reduce((a,b)=>a+b,0)/arr.length; }
+function std(arr){
+  const mu = mean(arr);
+  const v = arr.reduce((a,b)=>a+(b-mu)*(b-mu),0)/arr.length;
+  return Math.sqrt(v);
+}
+function diffs(arr){
+  const d = [];
+  for(let i=1;i<arr.length;i++) d.push(arr[i]-arr[i-1]);
+  return d;
+}
+function ema(arr, alpha){
+  if(arr.length===0) return [];
+  const out = new Array(arr.length);
+  let v = arr[0];
+  out[0] = v;
+  for(let i=1;i<arr.length;i++){
+    v = alpha*arr[i] + (1-alpha)*v;
+    out[i] = v;
+  }
+  return out;
+}
+function shiftSample(arr, i, shift){
+  const j = i + shift;
+  if(j < 0) return arr[0];
+  if(j >= arr.length) return arr[arr.length-1];
+  return arr[j];
+}
+
+const muPriceA = mean(price);
+const muSellerA = mean(sellers);
+const volPriceA = std(diffs(price));     // Aの価格の“日次変動”の大きさ
+const volSellerA = std(diffs(sellers));  // Aのセラー数の“日次変動”の大きさ
+
+// Aのランキングもなだらかに（表示用に平滑化）
+const rankSmoothA = ema(rank, 0.12).map(v=>Math.round(clamp(v, 1000, 160000)));
+
+// --- パターンB：下げ局面を「少し早め」にずらす（shapeShift=-12日相当） ---
+{
+  const rnd = makeRand(202);
+
+  // セラー数（Aと同程度の変動幅）
+  const sellersNoise = sellers.map((v,i)=> makeNoise(rnd, (volSellerA || 1) * 2.6));
+  window.sellersB = sellers.map((v,i)=>{
+    // Bは少しだけ早い周期変動
+    const wave = Math.sin((i+6)/9) * 1.2;
+    return clamp(Math.round(v + sellersNoise[i] + wave + (i%33===0?2:0) + (i%19===0?-1:0)), 0, 20);
+  });
+
+  // 価格：Aの形を「少し早めに」参照して、セラー逆相関＋A程度のノイズ
+  const beta = 0.10;
+  window.priceB = price.map((v,i)=>{
+    const base = shiftSample(price, i, -12);          // タイミングずらし
+    // B固有の軽いディップ（Aと違う位置で落ちる）
+    const dip = (i>70 && i<88) ? -0.18 : 0;
+    const inv = beta * (muSellerA - sellersB[i]);
+    const n = makeNoise(rnd, (volPriceA || 0.06) * 3.8);
+    return clamp(base + dip + inv + n, 4.8, 12.5);
+  });
+
+  // ランク：なだらか（まず相関で作ってからEMA）
+  const rawRankB = rank.map((v,i)=>{
+    const n = Math.round(makeNoise(rnd, 6000));
+    // セラー増→競争↑→ランク少し悪化、価格高→少し改善（弱め）
+    const sellerEffect = (sellersB[i] - muSellerA) * 700;
+    const priceEffect  = (muPriceA - priceB[i]) * 2500;
+    return clamp(Math.round(v + n + sellerEffect - priceEffect), 1000, 170000);
+  });
+  window.rankB = ema(rawRankB, 0.10).map(v=>Math.round(clamp(v, 1000, 170000)));
+}
+
+// --- パターンC：100日で「なだらかに」最安値になる（保証） ---
+{
+  const rnd = makeRand(777);
+
+  // セラー数：ゆるい波＋小さめノイズ
+  window.sellersC = sellers.map((v,i)=>{
+    const wave = Math.sin((i-10)/14) * 1.2;
+    const n = makeNoise(rnd, (volSellerA || 1) * 2.2);
+    return clamp(Math.round(v + wave + n), 0, 20);
+  });
+
+  // 価格：100日を中心に緩やかな谷（cosine）＋セラー逆相関
+  const idx100 = labels.indexOf('100日');
+  const width = 22;         // 半径（±22日でなだらか）
+  const beta  = 0.09;       // セラー逆相関
+  const noiseScale = (volPriceA || 0.06) * 2.6;  // Aと同程度の“揺れ”に合わせる
+
+  // まず raw を作る（逆相関＋ノイズ）
+  let raw = price.map((v,i)=>{
+    const inv = beta * (muSellerA - sellersC[i]);
+    const n = makeNoise(rnd, noiseScale);
+    return clamp(v + inv + n, 4.8, 12.5);
+  });
+
+  if(idx100 !== -1){
+    // 「100日が最安値」を保証するための目標値を決める（現状の最安値より少し低く）
+    const rawMin = Math.min(...raw);
+    const margin = 0.06;
+    const targetMin = clamp(rawMin - margin, 4.8, 12.5);
+
+    // 100日の値を targetMin に合わせるための谷の深さ（中心が最大）
+    const centerVal = raw[idx100];
+    let depth = clamp(centerVal - targetMin, 0.10, 1.20); // 深すぎ/浅すぎ防止
+
+    // cosine の重み（中心=1、端=0）
+    const w = new Array(raw.length).fill(0);
+    for(let i=0;i<raw.length;i++){
+      const d = Math.abs(i - idx100);
+      if(d <= width){
+        w[i] = (1 + Math.cos(Math.PI * d / width)) / 2;
+      }
+    }
+
+    // 谷を適用
+    let priceC = raw.map((v,i)=> clamp(v - depth*w[i], 4.8, 12.5));
+
+    // 100日以外が同値以下にならないように、最低でも targetMin + eps に持ち上げる（急変を避けるため後で平滑化）
+    const eps = 0.03;
+    for(let i=0;i<priceC.length;i++){
+      if(i === idx100) continue;
+      if(priceC[i] <= targetMin + 1e-9){
+        priceC[i] = targetMin + eps;
+      }
+    }
+    // 100日を確実に最安値に固定
+    priceC[idx100] = targetMin;
+
+    // 急激な段差を避ける：EMAで軽く平滑化（ただし100日は固定）
+    function emaHold(arr, alpha, holdIdx, holdVal){
+      const out = arr.slice();
+      let v = out[0];
+      for(let i=1;i<out.length;i++){
+        if(i === holdIdx){ v = holdVal; out[i] = holdVal; continue; }
+        v = alpha*out[i] + (1-alpha)*v;
+        out[i] = v;
+      }
+      // 逆方向も軽く（両側からなだらかに）
+      v = out[out.length-1];
+      for(let i=out.length-2;i>=0;i--){
+        if(i === holdIdx){ v = holdVal; out[i] = holdVal; continue; }
+        v = alpha*out[i] + (1-alpha)*v;
+        out[i] = v;
+      }
+      return out;
+    }
+    priceC = emaHold(priceC, 0.12, idx100, targetMin).map(v=>clamp(v, 4.8, 12.5));
+
+    // 仕上げ：もう一度「100日が唯一の最安値」を保証（微差で崩れるのを防止）
+    for(let i=0;i<priceC.length;i++){
+      if(i === idx100) continue;
+      if(priceC[i] <= targetMin + 1e-9){
+        priceC[i] = targetMin + eps;
+      }
+    }
+    priceC[idx100] = targetMin;
+
+    window.priceC = priceC;
+  }else{
+    window.priceC = raw;
+  }
+
+  // ランキング：ゆるやか（EMA）
+  const rawRankC = rank.map((v,i)=>{
+    const n = Math.round(makeNoise(rnd, 6000));
+    const sellerEffect = (sellersC[i] - muSellerA) * 700;
+    const priceEffect  = (muPriceA - priceC[i]) * 2500;
+    return clamp(Math.round(v + n + sellerEffect - priceEffect), 1000, 180000);
+  });
+  window.rankC = ema(rawRankC, 0.10).map(v=>Math.round(clamp(v, 1000, 180000)));
+}
+
+const chartA = buildChart('chartA', labels, price, sellers, rankSmoothA);
+const chartB = buildChart('chartB', labels, priceB, sellersB, rankB);
+const chartC = buildChart('chartC', labels, priceC, sellersC, rankC);
+const charts = [chartA, chartB, chartC];
+
+// ===== UI: 入力で赤字ライン更新 =====
+const lossInput = document.getElementById('lossInput');
+lossInput.addEventListener('input', () => {
+  const v = parseFloat(lossInput.value);
+  if (isNaN(v)) return;
+  LOSS_LINE = v;
+
+  charts.forEach(c => {
+    c.options.plugins.annotation.annotations.loss.yMin = v;
+    c.options.plugins.annotation.annotations.loss.yMax = v;
+    c.options.plugins.lossBg.loss = v;
+    c.update();
+  });
+});
+
+// ===== UI: 赤字ライン ON/OFF（点線＋背景） =====
+const lossToggle = document.getElementById('lossToggle');
+lossToggle.addEventListener('change', () => {
+  const show = lossToggle.checked;
+  charts.forEach(c=>{
+    c.options.plugins.annotation.annotations.loss.display = show;
+    c.options.plugins.lossBg.enabled = show;
+    c.update();
+  });
+});
+</script>
+</body>
+</html>
